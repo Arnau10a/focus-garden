@@ -231,22 +231,26 @@ export const App: React.FC = () => {
           <div className="w-full max-w-md lg:max-w-2xl h-full flex flex-col justify-between">
             {activeTab === 'timer' && (
               <div className="flex flex-col h-full justify-between items-center py-2 space-y-4">
-                {/* Selector de Etiquetas */}
+                {/* Selector de Etiquetas estilizado por colores con espacio adecuado */}
                 {!isRunning ? (
-                  <div className="w-full flex items-center justify-center space-x-2 overflow-x-auto no-scrollbar py-1">
-                    {SESSION_TAGS.map((tag) => (
-                      <button
-                        key={tag.name}
-                        onClick={() => setSelectedTag(tag.name)}
-                        className={`px-4 py-1.5 rounded-full text-xs font-semibold border transition-all shrink-0 active:scale-95 ${
-                          selectedTag === tag.name
-                            ? `${tag.color} ring-1 ring-emerald-400/60 scale-105 shadow-md shadow-emerald-500/15`
-                            : 'bg-emerald-950/40 text-slate-400 border-emerald-900/40 hover:text-slate-200'
-                        }`}
-                      >
-                        {tag.name}
-                      </button>
-                    ))}
+                  <div className="w-full flex items-center justify-start sm:justify-center space-x-2.5 overflow-x-auto no-scrollbar py-1.5 px-3">
+                    {SESSION_TAGS.map((tag) => {
+                      const isSelected = selectedTag === tag.name;
+                      return (
+                        <button
+                          key={tag.name}
+                          onClick={() => setSelectedTag(tag.name)}
+                          className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all shrink-0 active:scale-95 ${
+                            isSelected
+                              ? `${tag.activeColor} scale-105`
+                              : `${tag.idleColor}`
+                          }`}
+                        >
+                          <span className="text-sm">{tag.icon}</span>
+                          <span>{tag.name}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="inline-flex items-center space-x-2 bg-emerald-900/40 border border-emerald-600/40 px-5 py-2 rounded-full text-xs text-emerald-200 shadow-sm backdrop-blur-md">
@@ -308,7 +312,7 @@ export const App: React.FC = () => {
                 {/* Temporizador y Controles */}
                 <div className="w-full flex flex-col items-center space-y-4">
                   <div className="text-6xl md:text-7xl font-black tracking-tight font-mono text-white drop-shadow-[0_2px_14px_rgba(16,185,129,0.35)]">
-                    {formatTime(secondsRemaining)}
+                    {formatTime(isRunning ? secondsRemaining : targetDurationMinutes * 60)}
                   </div>
 
                   {!isRunning ? (

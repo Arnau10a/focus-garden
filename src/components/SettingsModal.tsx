@@ -207,7 +207,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="bg-emerald-950/70 border border-emerald-800/60 rounded-2xl p-4 space-y-3 text-xs">
               <div className="flex justify-between items-center text-slate-300">
                 <span>Versión:</span>
-                <span className="font-mono text-emerald-400 font-bold">FocusGarden 1.2.0 (PWA)</span>
+                <span className="font-mono text-emerald-400 font-bold">FocusGarden 1.2.1 (PWA)</span>
               </div>
               <div className="flex justify-between items-center text-slate-300">
                 <span>Almacenamiento:</span>

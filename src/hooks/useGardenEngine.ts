@@ -61,6 +61,13 @@ export const useGardenEngine = () => {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(25 * 60);
   const [strictWarningSeconds, setStrictWarningSeconds] = useState<number | null>(null);
 
+  const updateTargetDuration = (mins: number) => {
+    setTargetDurationMinutes(mins);
+    if (!isRunning) {
+      setSecondsRemaining(mins * 60);
+    }
+  };
+
   const timerRef = useRef<number | null>(null);
   const strictTimerRef = useRef<number | null>(null);
 
@@ -98,8 +105,9 @@ export const useGardenEngine = () => {
       // Si el otro dispositivo se rindió o terminó la sesión
       setIsRunning(false);
       setIsPaused(false);
+      setSecondsRemaining(targetDurationMinutes * 60);
     }
-  }, [isRunning]);
+  }, [isRunning, targetDurationMinutes]);
 
   // Suscripción Realtime con Supabase
   useEffect(() => {
@@ -296,7 +304,7 @@ export const useGardenEngine = () => {
         if (prev <= 1) {
           clearInterval(timerRef.current!);
           finishSessionSuccess();
-          return 0;
+          return targetDurationMinutes * 60;
         }
         return prev - 1;
       });
@@ -305,7 +313,7 @@ export const useGardenEngine = () => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isRunning, isPaused, finishSessionSuccess]);
+  }, [isRunning, isPaused, finishSessionSuccess, targetDurationMinutes]);
 
   // Detección de salida en Modo Estricto
   useEffect(() => {
@@ -380,7 +388,7 @@ export const useGardenEngine = () => {
     selectedTag,
     setSelectedTag,
     targetDurationMinutes,
-    setTargetDurationMinutes,
+    setTargetDurationMinutes: updateTargetDuration,
     strictMode,
     setStrictMode,
     soundEnabled,
