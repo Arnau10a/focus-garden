@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings,
   Cloud,
@@ -13,8 +13,12 @@ import {
   RotateCcw,
   Info,
   X,
+  Music,
+  RefreshCw,
   Bell
 } from 'lucide-react';
+import { SoundscapeType } from '../types';
+import { requestNotificationPermission, isNotificationGranted, sendSystemNotification } from '../utils/notifications';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -23,10 +27,13 @@ interface SettingsModalProps {
   onApplySyncCode: (code: string) => void;
   isSynced: boolean;
   soundEnabled: boolean;
+  currentSoundscape: SoundscapeType;
+  onChangeSoundscape: (type: SoundscapeType) => void;
   onToggleSound: () => void;
   strictMode: boolean;
   onToggleStrictMode: () => void;
   onResetStats: () => void;
+  onForceReload: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -36,16 +43,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onApplySyncCode,
   isSynced,
   soundEnabled,
+  currentSoundscape,
+  onChangeSoundscape,
   onToggleSound,
   strictMode,
   onToggleStrictMode,
-  onResetStats
+  onResetStats,
+  onForceReload
 }) => {
   const [inputCode, setInputCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [notifGranted, setNotifGranted] = useState<boolean>(() => isNotificationGranted());
+
+  useEffect(() => {
+    setNotifGranted(isNotificationGranted());
+  }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const handleRequestNotif = async () => {
+    const granted = await requestNotificationPermission();
+    setNotifGranted(granted);
+    if (granted) {
+      sendSystemNotification('🌿 FocusGarden: Notificaciones activadas', {
+        body: 'Te avisaremos cuando tu árbol florezca o termine tu descanso, ¡incluso fuera de la app!'
+      });
+    }
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(syncCode);
@@ -61,10 +87,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleReload = () => {
+    setReloading(true);
+    onForceReload();
+  };
+
+  const soundscapeOptions: { type: SoundscapeType; label: string; icon: string; desc: string }[] = [
+    { type: 'rain', label: 'Lluvia Zen', icon: '🌧️', desc: 'Gotas suaves con filtro relajante' },
+    { type: 'waves', label: 'Olas del Mar', icon: '🌊', desc: 'Vaivén rítmico de marea profunda' },
+    { type: 'birds', label: 'Bosque y Pájaros', icon: '🌲', desc: 'Brisa de hojas y cantos naturales' },
+    { type: 'fire', label: 'Hoguera de Leña', icon: '🔥', desc: 'Chisporroteo cálido de chimenea' },
+    { type: 'cafe', label: 'Cafetería Lo-Fi', icon: '☕', desc: 'Ruido rosa ambiental reconfortante' },
+  ];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
       <div className="bg-[#05231b] border border-emerald-700/60 rounded-3xl max-w-md w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Cabecera del Menú de Ajustes */}
+        {/* Cabecera */}
         <div className="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between bg-emerald-950/60 shrink-0">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
@@ -77,15 +116,124 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-full bg-emerald-900/40 hover:bg-emerald-800 transition-colors"
+            className="p-1.5 text-slate-400 hover:text-white rounded-full bg-emerald-900/40 hover:bg-emerald-800 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Contenido con scroll */}
+        {/* Contenido */}
         <div className="p-6 overflow-y-auto space-y-6">
-          {/* SECCIÓN 1: SINCRONIZACIÓN EN LA NUBE */}
+          {/* SECCIÓN 1: PAISAJES SONOROS RELAJANTES (Audio Selector) */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
+                <Music className="w-4 h-4 text-emerald-400" />
+                <span>Paisajes Sonoros Relajantes</span>
+              </h3>
+              <button
+                onClick={onToggleSound}
+                className={`text-xs px-2.5 py-1 rounded-full font-bold border transition-all ${
+                  soundEnabled
+                    ? 'bg-emerald-500 text-slate-950 border-emerald-400'
+                    : 'bg-emerald-950 text-slate-400 border-emerald-900'
+                }`}
+              >
+                {soundEnabled ? 'Activo' : 'Silencio'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              {soundscapeOptions.map((opt) => {
+                const isSelected = currentSoundscape === opt.type;
+                return (
+                  <button
+                    key={opt.type}
+                    onClick={() => onChangeSoundscape(opt.type)}
+                    className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all ${
+                      isSelected
+                        ? 'bg-emerald-800/40 border-emerald-400 ring-1 ring-emerald-400/50 shadow-sm'
+                        : 'bg-emerald-950/60 border-emerald-900/50 hover:border-emerald-700'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <span className="text-2xl">{opt.icon}</span>
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center space-x-1.5">
+                          <span>{opt.label}</span>
+                          {isSelected && soundEnabled && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-400 leading-tight mt-0.5">{opt.desc}</div>
+                      </div>
+                    </div>
+                    {isSelected && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* SECCIÓN 2: NOTIFICACIONES DEL SISTEMA */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
+              <Bell className="w-4 h-4 text-emerald-400" />
+              <span>Notificaciones y Avisos de Tiempo</span>
+            </h3>
+
+            <div className="bg-emerald-950/70 border border-emerald-800/60 p-3.5 rounded-2xl flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className={`p-2 rounded-xl ${notifGranted ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-950/40 text-amber-400'}`}>
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-white">Avisos al finalizar el temporizador</div>
+                  <div className="text-[11px] text-slate-400">
+                    {notifGranted ? 'Notificaciones activadas (sonará al terminar aunque estés fuera)' : 'Permite avisarte cuando concluya tu sesión o descanso'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={handleRequestNotif}
+                className={`text-xs px-3 py-1.5 rounded-xl font-bold border transition-all active:scale-95 shrink-0 ml-2 ${
+                  notifGranted
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                    : 'bg-emerald-500 text-slate-950 border-emerald-400 hover:bg-emerald-400 shadow-md'
+                }`}
+              >
+                {notifGranted ? 'Activo ✓' : 'Permitir'}
+              </button>
+            </div>
+          </div>
+
+          {/* SECCIÓN 3: MODO ESTRICTO */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
+              <Shield className="w-4 h-4 text-emerald-400" />
+              <span>Protección Antidistracciones</span>
+            </h3>
+
+            <div
+              onClick={onToggleStrictMode}
+              className="bg-emerald-950/70 border border-emerald-800/60 p-3.5 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-emerald-900/20 transition-colors"
+            >
+              <div className="flex items-center space-x-3">
+                <div className={`p-2 rounded-xl ${strictMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
+                  <Shield className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-white">Modo Estricto</div>
+                  <div className="text-[11px] text-slate-400">Penaliza el árbol si sales de la aplicación</div>
+                </div>
+              </div>
+              <div className={`w-9 h-5 rounded-full p-0.5 transition-colors ${strictMode ? 'bg-emerald-500' : 'bg-slate-700'}`}>
+                <div className={`w-4 h-4 rounded-full bg-white transition-transform ${strictMode ? 'translate-x-4' : 'translate-x-0'}`} />
+              </div>
+            </div>
+          </div>
+
+          {/* SECCIÓN 4: SINCRONIZACIÓN EN LA NUBE */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
               <Cloud className="w-4 h-4 text-sky-400" />
@@ -124,7 +272,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
 
-              {/* Formulario para enlazar con el código de otro dispositivo */}
               <form onSubmit={handleConnect} className="pt-2 border-t border-emerald-800/40 space-y-2">
                 <label className="text-[11px] text-slate-400 block">
                   Vincular con el ID de tu otro dispositivo:
@@ -149,72 +296,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* SECCIÓN 2: PREFERENCIAS DE ENFOQUE */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-              <span>Preferencias de Sesión</span>
-            </h3>
-
-            <div className="bg-emerald-950/70 border border-emerald-800/60 rounded-2xl divide-y divide-emerald-800/40">
-              {/* Sonido Zen de Lluvia */}
-              <div
-                onClick={onToggleSound}
-                className="p-3.5 flex items-center justify-between cursor-pointer hover:bg-emerald-900/20 transition-colors"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className={`p-2 rounded-xl ${soundEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
-                    {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-white">Paisaje Sonoro (Lluvia Zen)</div>
-                    <div className="text-[11px] text-slate-400">Sonido ambiente suave durante el enfoque</div>
-                  </div>
-                </div>
-                <div className={`w-9 h-5 rounded-full p-0.5 transition-colors ${soundEnabled ? 'bg-emerald-500' : 'bg-slate-700'}`}>
-                  <div className={`w-4 h-4 rounded-full bg-white transition-transform ${soundEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
-                </div>
-              </div>
-
-              {/* Modo Estricto por Defecto */}
-              <div
-                onClick={onToggleStrictMode}
-                className="p-3.5 flex items-center justify-between cursor-pointer hover:bg-emerald-900/20 transition-colors"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className={`p-2 rounded-xl ${strictMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
-                    <Shield className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-white">Modo Estricto Antidistracciones</div>
-                    <div className="text-[11px] text-slate-400">Penaliza el árbol si sales de la aplicación</div>
-                  </div>
-                </div>
-                <div className={`w-9 h-5 rounded-full p-0.5 transition-colors ${strictMode ? 'bg-emerald-500' : 'bg-slate-700'}`}>
-                  <div className={`w-4 h-4 rounded-full bg-white transition-transform ${strictMode ? 'translate-x-4' : 'translate-x-0'}`} />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* SECCIÓN 3: INFORMACIÓN Y GESTIÓN */}
+          {/* SECCIÓN 5: INFORMACIÓN & ACTUALIZAR CACHÉ */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
               <Info className="w-4 h-4 text-emerald-400" />
-              <span>Acerca de & Datos</span>
+              <span>Acerca de & Actualizaciones</span>
             </h3>
 
             <div className="bg-emerald-950/70 border border-emerald-800/60 rounded-2xl p-4 space-y-3 text-xs">
               <div className="flex justify-between items-center text-slate-300">
                 <span>Versión:</span>
-                <span className="font-mono text-emerald-400 font-bold">FocusGarden 1.2.1 (PWA)</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-300">
-                <span>Almacenamiento:</span>
-                <span className="text-slate-400">Local + Nube Supabase</span>
+                <span className="font-mono text-emerald-400 font-bold">FocusGarden 1.3.0 (PWA)</span>
               </div>
 
-              {/* Botón de Reiniciar / Borrar Datos */}
+              {/* Botón para Forzar Actualización y limpiar caché en móvil */}
+              <button
+                onClick={handleReload}
+                disabled={reloading}
+                className="w-full flex items-center justify-center space-x-2 py-2.5 px-3 bg-emerald-900/50 hover:bg-emerald-800/60 border border-emerald-700/60 text-emerald-300 rounded-xl font-bold transition-all active:scale-95"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${reloading ? 'animate-spin' : ''}`} />
+                <span>{reloading ? 'Actualizando app...' : 'Forzar recarga / Actualizar app'}</span>
+              </button>
+
+              {/* Botón de Borrar Datos */}
               <div className="pt-2 border-t border-emerald-800/40">
                 {!showConfirmReset ? (
                   <button

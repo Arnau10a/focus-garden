@@ -40,19 +40,33 @@ export interface PlantRecord {
 
 export interface ActiveSessionSync {
   isRunning: boolean;
+  isBreak?: boolean;
   speciesId: PlantSpeciesId;
   tag: SessionTag;
   durationMinutes: number;
-  startTime: number; // timestamp en ms
-  targetEndTime: number; // timestamp en ms
+  startTime: number;
+  targetEndTime: number;
+}
+
+export type SoundscapeType = 'rain' | 'waves' | 'birds' | 'fire' | 'cafe';
+
+export interface Achievement {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  rewardDrops: number;
+  unlocked: boolean;
 }
 
 export interface UserStats {
-  drops: number; // Moneda de gotas de agua
+  drops: number;
   totalFocusMinutes: number;
   streakDays: number;
   lastActiveDate: string;
   unlockedSpecies: PlantSpeciesId[];
   records: PlantRecord[];
   activeSession?: ActiveSessionSync | null;
+  unlockedAchievements?: string[];
+  pomodoroSessionsCount?: number;
 }

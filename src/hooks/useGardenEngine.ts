@@ -1,7 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { PlantSpeciesId, SessionTag, GrowthStage, UserStats, PlantRecord, ActiveSessionSync } from '../types';
+import {
+  PlantSpeciesId,
+  SessionTag,
+  GrowthStage,
+  UserStats,
+  PlantRecord,
+  ActiveSessionSync,
+  SoundscapeType
+} from '../types';
 import { soundscape } from '../audio/soundscape';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
+import { checkNewAchievements } from '../data/achievements';
+import { sendSystemNotification, requestNotificationPermission } from '../utils/notifications';
 import confetti from 'canvas-confetti';
 
 const STORAGE_KEY = 'focus_garden_stats_v1';
@@ -14,7 +24,9 @@ const INITIAL_STATS: UserStats = {
   lastActiveDate: new Date().toISOString().split('T')[0],
   unlockedSpecies: ['pine'],
   records: [],
-  activeSession: null
+  activeSession: null,
+  unlockedAchievements: [],
+  pomodoroSessionsCount: 0
 };
 
 const generateSyncCode = () => {
@@ -54,16 +66,27 @@ export const useGardenEngine = () => {
   const [targetDurationMinutes, setTargetDurationMinutes] = useState<number>(25);
   const [strictMode, setStrictMode] = useState<boolean>(true);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
+  const [currentSoundscape, setCurrentSoundscape] = useState<SoundscapeType>('rain');
 
-  // Estados del temporizador
+  // Estados del temporizador y descansos
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [isBreak, setIsBreak] = useState<boolean>(false);
   const [secondsRemaining, setSecondsRemaining] = useState<number>(25 * 60);
   const [strictWarningSeconds, setStrictWarningSeconds] = useState<number | null>(null);
 
+  // Modal de felicitación y notas
+  const [completedSessionData, setCompletedSessionData] = useState<{
+    speciesId: PlantSpeciesId;
+    tag: SessionTag;
+    durationMinutes: number;
+    dropsEarned: number;
+    recordId: string;
+  } | null>(null);
+
   const updateTargetDuration = (mins: number) => {
     setTargetDurationMinutes(mins);
-    if (!isRunning) {
+    if (!isRunning && !isBreak) {
       setSecondsRemaining(mins * 60);
     }
   };
@@ -71,7 +94,7 @@ export const useGardenEngine = () => {
   const timerRef = useRef<number | null>(null);
   const strictTimerRef = useRef<number | null>(null);
 
-  // Helper para empujar cambios a la nube si Supabase está activo
+  // Sincronización en la nube con Supabase
   const syncToCloud = useCallback(async (newStats: UserStats) => {
     if (isSupabaseConfigured && supabase) {
       const client = supabase;
@@ -85,13 +108,12 @@ export const useGardenEngine = () => {
     }
   }, [syncCode]);
 
-  // Manejar sincronización de sesión activa cuando llega desde el otro dispositivo
+  // Manejar sincronización remota
   const handleRemoteStatsUpdate = useCallback((remoteStats: UserStats) => {
     setStats(remoteStats);
 
     const active = remoteStats.activeSession;
     if (active && active.isRunning) {
-      // Hay un temporizador corriendo en el otro dispositivo
       const now = Date.now();
       const remaining = Math.max(0, Math.round((active.targetEndTime - now) / 1000));
 
@@ -101,15 +123,15 @@ export const useGardenEngine = () => {
       setSecondsRemaining(remaining);
       setIsRunning(true);
       setIsPaused(false);
+      setIsBreak(Boolean(active.isBreak));
     } else if (!active && isRunning) {
-      // Si el otro dispositivo se rindió o terminó la sesión
       setIsRunning(false);
       setIsPaused(false);
+      setIsBreak(false);
       setSecondsRemaining(targetDurationMinutes * 60);
     }
   }, [isRunning, targetDurationMinutes]);
 
-  // Suscripción Realtime con Supabase
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
     const client = supabase;
@@ -165,7 +187,9 @@ export const useGardenEngine = () => {
   const progressRatio = (totalSeconds - secondsRemaining) / totalSeconds;
 
   let currentGrowthStage: GrowthStage = 'seed';
-  if (progressRatio >= 0.99) {
+  if (isBreak) {
+    currentGrowthStage = 'mature';
+  } else if (progressRatio >= 0.99) {
     currentGrowthStage = 'mature';
   } else if (progressRatio >= 0.5) {
     currentGrowthStage = 'growing';
@@ -175,24 +199,25 @@ export const useGardenEngine = () => {
     currentGrowthStage = 'seed';
   }
 
-  // Finalizar sesión con éxito
+  // Finalizar sesión de enfoque con éxito
   const finishSessionSuccess = useCallback(() => {
     setIsRunning(false);
     setIsPaused(false);
     if (timerRef.current) clearInterval(timerRef.current);
-    soundscape.stopRain();
+    soundscape.stopSoundscape();
     soundscape.playZenChime('complete');
 
     confetti({
-      particleCount: 80,
-      spread: 70,
+      particleCount: 90,
+      spread: 75,
       origin: { y: 0.6 },
       colors: ['#34d399', '#10b981', '#fbcfe8', '#facc15', '#38bdf8']
     });
 
     const dropsEarned = Math.max(5, Math.floor(targetDurationMinutes / 2));
+    const recordId = `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newRecord: PlantRecord = {
-      id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: recordId,
       speciesId: selectedSpecies,
       durationMinutes: targetDurationMinutes,
       tag: selectedTag,
@@ -202,68 +227,171 @@ export const useGardenEngine = () => {
       growthStage: 'mature'
     };
 
+    setCompletedSessionData({
+      speciesId: selectedSpecies,
+      tag: selectedTag,
+      durationMinutes: targetDurationMinutes,
+      dropsEarned,
+      recordId
+    });
+
+    // Enviar notificación del sistema si el usuario está fuera de la app o minimizado
+    sendSystemNotification('🎉 ¡Sesión de concentración completada!', {
+      body: `Has cultivado tu árbol con éxito durante ${targetDurationMinutes} min en "${selectedTag}". ¡Toca para ver tu recompensa!`,
+      tag: 'focusgarden-session-complete',
+      renotify: true
+    });
+
     setStats((prev) => {
       const today = new Date().toISOString().split('T')[0];
       const isNewDay = prev.lastActiveDate !== today;
-      const updated: UserStats = {
+      let newDrops = prev.drops + dropsEarned;
+
+      const updatedCandidate: UserStats = {
         ...prev,
-        drops: prev.drops + dropsEarned,
+        drops: newDrops,
         totalFocusMinutes: prev.totalFocusMinutes + targetDurationMinutes,
         streakDays: isNewDay ? prev.streakDays + 1 : prev.streakDays,
         lastActiveDate: today,
         records: [newRecord, ...prev.records],
-        activeSession: null // Libera la sesión en el cronómetro del otro equipo
+        activeSession: null,
+        pomodoroSessionsCount: (prev.pomodoroSessionsCount || 0) + 1
       };
-      syncToCloud(updated);
-      return updated;
+
+      // 3. Evaluar Logros nuevos
+      const newAchieved = checkNewAchievements(updatedCandidate);
+      if (newAchieved.length > 0) {
+        // Bono extra de gotas por logros
+        newAchieved.forEach(a => {
+          newDrops += 25;
+        });
+        updatedCandidate.drops = newDrops;
+        updatedCandidate.unlockedAchievements = [
+          ...(prev.unlockedAchievements || []),
+          ...newAchieved
+        ];
+      }
+
+      syncToCloud(updatedCandidate);
+      return updatedCandidate;
     });
 
     setSecondsRemaining(targetDurationMinutes * 60);
   }, [selectedSpecies, selectedTag, targetDurationMinutes, syncToCloud]);
 
+  // 1. Iniciar descanso Pomodoro (5m o 15m)
+  const startBreak = (breakMinutes: number) => {
+    requestNotificationPermission().catch(() => {});
+    soundscape.playZenChime('break');
+    setIsBreak(true);
+    setTargetDurationMinutes(breakMinutes);
+    const durationSecs = breakMinutes * 60;
+    setSecondsRemaining(durationSecs);
+    setIsRunning(true);
+    setIsPaused(false);
+
+    const now = Date.now();
+    const activeSession: ActiveSessionSync = {
+      isRunning: true,
+      isBreak: true,
+      speciesId: selectedSpecies,
+      tag: selectedTag,
+      durationMinutes: breakMinutes,
+      startTime: now,
+      targetEndTime: now + durationSecs * 1000
+    };
+
+    setStats((prev) => {
+      const updated = { ...prev, activeSession };
+      syncToCloud(updated);
+      return updated;
+    });
+  };
+
+  // Finalizar descanso Pomodoro
+  const finishBreakSuccess = useCallback(() => {
+    setIsRunning(false);
+    setIsPaused(false);
+    setIsBreak(false);
+    soundscape.playZenChime('start');
+    setTargetDurationMinutes(25);
+    setSecondsRemaining(25 * 60);
+
+    // Enviar notificación del sistema para volver a enfocarse
+    sendSystemNotification('☕ ¡El descanso ha terminado!', {
+      body: 'Tu mente está despejada. ¡Es hora de iniciar una nueva sesión de enfoque!',
+      tag: 'focusgarden-break-complete',
+      renotify: true
+    });
+
+    setStats((prev) => {
+      const updated = { ...prev, activeSession: null };
+      syncToCloud(updated);
+      return updated;
+    });
+  }, [syncToCloud]);
+
+  // 6. Guardar nota de sesión en el registro
+  const saveSessionNote = (noteText: string) => {
+    if (!completedSessionData) return;
+    setStats((prev) => {
+      const updatedRecords = prev.records.map((r) =>
+        r.id === completedSessionData.recordId ? { ...r, notes: noteText } : r
+      );
+      const updated = { ...prev, records: updatedRecords };
+      syncToCloud(updated);
+      return updated;
+    });
+  };
+
   // Fallo de sesión
   const failSession = useCallback((reason: 'give_up' | 'strict_left') => {
     setIsRunning(false);
     setIsPaused(false);
+    setIsBreak(false);
     setStrictWarningSeconds(null);
     if (timerRef.current) clearInterval(timerRef.current);
     if (strictTimerRef.current) clearInterval(strictTimerRef.current);
 
-    soundscape.stopRain();
+    soundscape.stopSoundscape();
     soundscape.playZenChime('wilt');
 
-    const minutesFocused = Math.max(1, Math.floor((totalSeconds - secondsRemaining) / 60));
-    const newRecord: PlantRecord = {
-      id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      speciesId: selectedSpecies,
-      durationMinutes: minutesFocused,
-      tag: selectedTag,
-      date: new Date().toISOString(),
-      timestamp: Date.now(),
-      completed: false,
-      growthStage: 'wilted',
-      notes: reason === 'strict_left' ? 'Planta marchitada por salir a otra app' : 'Sesión interrumpida'
-    };
-
-    setStats((prev) => {
-      const updated: UserStats = {
-        ...prev,
-        records: [newRecord, ...prev.records],
-        activeSession: null // Se rinde también en el otro dispositivo
+    if (!isBreak) {
+      const minutesFocused = Math.max(1, Math.floor((totalSeconds - secondsRemaining) / 60));
+      const newRecord: PlantRecord = {
+        id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        speciesId: selectedSpecies,
+        durationMinutes: minutesFocused,
+        tag: selectedTag,
+        date: new Date().toISOString(),
+        timestamp: Date.now(),
+        completed: false,
+        growthStage: 'wilted',
+        notes: reason === 'strict_left' ? 'Marchitada por salir a otra app' : 'Sesión interrumpida'
       };
-      syncToCloud(updated);
-      return updated;
-    });
+
+      setStats((prev) => {
+        const updated: UserStats = {
+          ...prev,
+          records: [newRecord, ...prev.records],
+          activeSession: null
+        };
+        syncToCloud(updated);
+        return updated;
+      });
+    }
 
     setSecondsRemaining(targetDurationMinutes * 60);
-  }, [totalSeconds, secondsRemaining, selectedSpecies, selectedTag, targetDurationMinutes, syncToCloud]);
+  }, [totalSeconds, secondsRemaining, selectedSpecies, selectedTag, targetDurationMinutes, isBreak, syncToCloud]);
 
-  // Iniciar sesión y propagar a la nube
+  // Iniciar sesión
   const startSession = () => {
+    requestNotificationPermission().catch(() => {});
     soundscape.playZenChime('start');
     if (soundEnabled) {
-      soundscape.startRain();
+      soundscape.playSoundscape(currentSoundscape);
     }
+    setIsBreak(false);
     const durationSecs = targetDurationMinutes * 60;
     setSecondsRemaining(durationSecs);
     setIsRunning(true);
@@ -273,6 +401,7 @@ export const useGardenEngine = () => {
     const now = Date.now();
     const activeSession: ActiveSessionSync = {
       isRunning: true,
+      isBreak: false,
       speciesId: selectedSpecies,
       tag: selectedTag,
       durationMinutes: targetDurationMinutes,
@@ -295,15 +424,35 @@ export const useGardenEngine = () => {
     setIsPaused((prev) => !prev);
   };
 
-  // Cronómetro local
+  // Cronómetro local sincronizado con tiempo real exacto (sin desfase si la app se minimiza)
   useEffect(() => {
     if (!isRunning || isPaused) return;
 
     timerRef.current = window.setInterval(() => {
       setSecondsRemaining((prev) => {
+        // Si hay una sesión activa con hora final calculada, comprobamos el tiempo real restante
+        if (stats.activeSession && stats.activeSession.targetEndTime) {
+          const now = Date.now();
+          const realRemaining = Math.max(0, Math.round((stats.activeSession.targetEndTime - now) / 1000));
+          if (realRemaining <= 0) {
+            clearInterval(timerRef.current!);
+            if (isBreak) {
+              finishBreakSuccess();
+            } else {
+              finishSessionSuccess();
+            }
+            return targetDurationMinutes * 60;
+          }
+          return realRemaining;
+        }
+
         if (prev <= 1) {
           clearInterval(timerRef.current!);
-          finishSessionSuccess();
+          if (isBreak) {
+            finishBreakSuccess();
+          } else {
+            finishSessionSuccess();
+          }
           return targetDurationMinutes * 60;
         }
         return prev - 1;
@@ -313,12 +462,12 @@ export const useGardenEngine = () => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isRunning, isPaused, finishSessionSuccess, targetDurationMinutes]);
+  }, [isRunning, isPaused, isBreak, finishSessionSuccess, finishBreakSuccess, targetDurationMinutes, stats.activeSession]);
 
-  // Detección de salida en Modo Estricto
+  // Detección de salida en Modo Estricto (solo penaliza si NO es descanso)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (!isRunning || !strictMode) return;
+      if (!isRunning || !strictMode || isBreak) return;
 
       if (document.hidden) {
         let countdown = 10;
@@ -339,6 +488,21 @@ export const useGardenEngine = () => {
           strictTimerRef.current = null;
         }
         setStrictWarningSeconds(null);
+
+        // Si la sesión ha terminado mientras el usuario estaba fuera
+        if (stats.activeSession && stats.activeSession.targetEndTime) {
+          const now = Date.now();
+          const remaining = Math.max(0, Math.round((stats.activeSession.targetEndTime - now) / 1000));
+          if (remaining <= 0) {
+            if (isBreak) {
+              finishBreakSuccess();
+            } else {
+              finishSessionSuccess();
+            }
+          } else {
+            setSecondsRemaining(remaining);
+          }
+        }
       }
     };
 
@@ -347,17 +511,25 @@ export const useGardenEngine = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (strictTimerRef.current) clearInterval(strictTimerRef.current);
     };
-  }, [isRunning, strictMode, failSession]);
+  }, [isRunning, strictMode, isBreak, failSession]);
 
+  // Control de sonido y cambio de paisaje
   const toggleSound = () => {
     const nextState = !soundEnabled;
     setSoundEnabled(nextState);
     if (isRunning) {
       if (nextState) {
-        soundscape.startRain();
+        soundscape.playSoundscape(currentSoundscape);
       } else {
-        soundscape.stopRain();
+        soundscape.stopSoundscape();
       }
+    }
+  };
+
+  const changeSoundscape = (type: SoundscapeType) => {
+    setCurrentSoundscape(type);
+    if (isRunning && soundEnabled) {
+      soundscape.playSoundscape(type);
     }
   };
 
@@ -372,10 +544,40 @@ export const useGardenEngine = () => {
         drops: prev.drops - cost,
         unlockedSpecies: [...prev.unlockedSpecies, speciesId]
       };
+
+      const newAchieved = checkNewAchievements(updated);
+      if (newAchieved.length > 0) {
+        updated.unlockedAchievements = [
+          ...(prev.unlockedAchievements || []),
+          ...newAchieved
+        ];
+      }
+
       syncToCloud(updated);
       return updated;
     });
     return true;
+  };
+
+  // 5. Forzar recarga limpiando Service Worker en móviles y PC
+  const forceReloadApp = async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+          await registration.unregister();
+        }
+      }
+      if ('caches' in window) {
+        const cacheNames = await caches.keys();
+        for (const name of cacheNames) {
+          await caches.delete(name);
+        }
+      }
+    } catch {
+      // Fallback
+    }
+    window.location.reload();
   };
 
   return {
@@ -393,16 +595,24 @@ export const useGardenEngine = () => {
     setStrictMode,
     soundEnabled,
     toggleSound,
+    currentSoundscape,
+    changeSoundscape,
     isRunning,
     isPaused,
+    isBreak,
     secondsRemaining,
     progressRatio,
     currentGrowthStage,
     strictWarningSeconds,
     startSession,
+    startBreak,
     togglePause,
     failSession,
     buySpecies,
+    completedSessionData,
+    closeSuccessModal: () => setCompletedSessionData(null),
+    saveSessionNote,
+    forceReloadApp,
     resetStats: () => {
       setStats(INITIAL_STATS);
       syncToCloud(INITIAL_STATS);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGardenEngine } from './hooks/useGardenEngine';
 import { PLANT_SPECIES_LIST, SESSION_TAGS } from './data/plants';
 import { PlantIllustration } from './components/PlantIllustration';
@@ -19,14 +19,19 @@ import {
   AlertTriangle,
   Sparkles,
   ChevronRight,
-  Settings
+  Settings,
+  BarChart3,
+  Coffee
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
+import { AnalyticsModal } from './components/AnalyticsModal';
+import { SessionSuccessModal } from './components/SessionSuccessModal';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'timer' | 'forest' | 'shop'>('timer');
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
 
   const {
     stats,
@@ -43,16 +48,24 @@ export const App: React.FC = () => {
     setStrictMode,
     soundEnabled,
     toggleSound,
+    currentSoundscape,
+    changeSoundscape,
     isRunning,
     isPaused,
+    isBreak,
     secondsRemaining,
     progressRatio,
     currentGrowthStage,
     strictWarningSeconds,
     startSession,
+    startBreak,
     togglePause,
     failSession,
     buySpecies,
+    completedSessionData,
+    closeSuccessModal,
+    saveSessionNote,
+    forceReloadApp,
     resetStats
   } = useGardenEngine();
 
@@ -63,6 +76,20 @@ export const App: React.FC = () => {
   };
 
   const currentSpeciesObj = PLANT_SPECIES_LIST.find((s) => s.id === selectedSpecies) || PLANT_SPECIES_LIST[0];
+
+  // Actualizar título de la pestaña con la cuenta regresiva en vivo
+  useEffect(() => {
+    if (isRunning) {
+      const formatted = formatTime(secondsRemaining);
+      if (isBreak) {
+        document.title = `☕ (${formatted}) Descanso | FocusGarden`;
+      } else {
+        document.title = `🌿 (${formatted}) ${selectedTag} | FocusGarden`;
+      }
+    } else {
+      document.title = 'FocusGarden - Focus Plant & Forest';
+    }
+  }, [isRunning, isBreak, secondsRemaining, selectedTag]);
 
   return (
     <div className="flex h-screen w-full bg-[#02130f] text-slate-100 overflow-hidden font-sans">
@@ -142,6 +169,14 @@ export const App: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setShowAnalyticsModal(true)}
+              className="w-full flex items-center space-x-3.5 px-4 py-3 rounded-2xl font-bold text-sm transition-all text-left text-slate-300 hover:bg-emerald-900/30 hover:text-white"
+            >
+              <BarChart3 className="w-5 h-5 text-emerald-400" />
+              <span>Estadísticas & Logros</span>
+            </button>
+
+            <button
               onClick={() => setShowSettingsModal(true)}
               className="w-full flex items-center space-x-3.5 px-4 py-3 rounded-2xl font-bold text-sm transition-all text-left text-slate-300 hover:bg-emerald-900/30 hover:text-white"
             >
@@ -163,7 +198,13 @@ export const App: React.FC = () => {
           >
             <div className="flex items-center space-x-2.5">
               {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4" />}
-              <span className="text-xs font-semibold">Lluvia Zen</span>
+              <span className="text-xs font-semibold">
+                {currentSoundscape === 'rain' && '🌧️ Lluvia Zen'}
+                {currentSoundscape === 'waves' && '🌊 Olas de Mar'}
+                {currentSoundscape === 'birds' && '🌲 Bosque Pájaros'}
+                {currentSoundscape === 'fire' && '🔥 Hoguera Leña'}
+                {currentSoundscape === 'cafe' && '☕ Cafetería Lo-Fi'}
+              </span>
             </div>
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-950">
               {soundEnabled ? 'ON' : 'OFF'}
@@ -209,6 +250,14 @@ export const App: React.FC = () => {
 
           <div className="flex items-center space-x-2">
             <button
+              onClick={() => setShowAnalyticsModal(true)}
+              className="p-2 rounded-xl border border-emerald-800/60 bg-emerald-900/40 text-emerald-300 active:scale-95 transition-all"
+              title="Estadísticas & Logros"
+            >
+              <BarChart3 className="w-4 h-4" />
+            </button>
+
+            <button
               onClick={() => setShowSettingsModal(true)}
               className="p-2 rounded-xl border border-emerald-800/60 bg-emerald-900/40 text-emerald-300 active:scale-95 transition-all"
               title="Opciones y Ajustes"
@@ -252,6 +301,11 @@ export const App: React.FC = () => {
                       );
                     })}
                   </div>
+                ) : isBreak ? (
+                  <div className="inline-flex items-center space-x-2 bg-amber-950/60 border border-amber-500/50 px-5 py-2 rounded-full text-xs text-amber-200 shadow-md backdrop-blur-md animate-pulse">
+                    <Coffee className="w-4 h-4 text-amber-400" />
+                    <span>Tiempo de Descanso: <b className="text-white">Relájate y bebe agua ☕</b></span>
+                  </div>
                 ) : (
                   <div className="inline-flex items-center space-x-2 bg-emerald-900/40 border border-emerald-600/40 px-5 py-2 rounded-full text-xs text-emerald-200 shadow-sm backdrop-blur-md">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -276,7 +330,7 @@ export const App: React.FC = () => {
                         cy="50"
                         r="45"
                         fill="none"
-                        stroke="#10b981"
+                        stroke={isBreak ? '#f59e0b' : '#10b981'}
                         strokeWidth="4"
                         strokeDasharray="283"
                         strokeDashoffset={283 * (1 - (isRunning ? progressRatio : 0))}
@@ -381,10 +435,14 @@ export const App: React.FC = () => {
                     <div className="w-full flex items-center space-x-3">
                       <button
                         onClick={() => setShowExitConfirm(true)}
-                        className="flex-1 py-3.5 bg-red-950/40 hover:bg-red-900/50 border border-red-800/60 active:scale-95 text-red-300 font-bold rounded-2xl flex items-center justify-center space-x-2 text-xs md:text-sm transition-all shadow-md"
+                        className={`flex-1 py-3.5 border active:scale-95 font-bold rounded-2xl flex items-center justify-center space-x-2 text-xs md:text-sm transition-all shadow-md ${
+                          isBreak
+                            ? 'bg-amber-950/40 hover:bg-amber-900/50 border-amber-800/60 text-amber-200'
+                            : 'bg-red-950/40 hover:bg-red-900/50 border-red-800/60 text-red-300'
+                        }`}
                       >
                         <Square className="w-4 h-4" />
-                        <span>Rendirse</span>
+                        <span>{isBreak ? 'Terminar Descanso' : 'Rendirse'}</span>
                       </button>
 
                       {!strictMode && (
@@ -465,32 +523,42 @@ export const App: React.FC = () => {
         </nav>
       </div>
 
-      {/* Modal Confirmar Rendirse */}
+      {/* Modal Confirmar Rendirse / Salir del Descanso */}
       {showExitConfirm && (
         <div className="absolute inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-5 animate-in fade-in duration-150">
           <div className="bg-[#05231b] border border-red-900/60 rounded-3xl p-6 text-center max-w-xs w-full shadow-2xl">
-            <div className="w-14 h-14 rounded-full bg-red-950/70 border border-red-600/40 flex items-center justify-center mx-auto mb-3 shadow-lg shadow-red-500/20">
-              <AlertTriangle className="w-7 h-7 text-red-400" />
+            <div className={`w-14 h-14 rounded-full border flex items-center justify-center mx-auto mb-3 shadow-lg ${
+              isBreak ? 'bg-amber-950/70 border-amber-600/40 text-amber-400' : 'bg-red-950/70 border-red-600/40 text-red-400 shadow-red-500/20'
+            }`}>
+              {isBreak ? <Coffee className="w-7 h-7" /> : <AlertTriangle className="w-7 h-7" />}
             </div>
-            <h3 className="text-lg font-bold text-white">¿Seguro que te rindes?</h3>
+            <h3 className="text-lg font-bold text-white">
+              {isBreak ? '¿Terminar descanso ahora?' : '¿Seguro que te rindes?'}
+            </h3>
             <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-              Si abandonas ahora, tu planta morirá marchita y aparecerá seca en tu bosque.
+              {isBreak
+                ? 'Volverás al temporizador listo para comenzar tu siguiente bloque de concentración.'
+                : 'Si abandonas ahora, tu planta morirá marchita y aparecerá seca en tu bosque.'}
             </p>
             <div className="grid grid-cols-2 gap-3 mt-5">
               <button
                 onClick={() => setShowExitConfirm(false)}
                 className="py-3 bg-emerald-500 hover:bg-emerald-400 font-bold text-slate-950 rounded-xl text-xs active:scale-95 transition-all shadow-md shadow-emerald-500/20"
               >
-                Continuar
+                {isBreak ? 'Continuar descanso' : 'Continuar'}
               </button>
               <button
                 onClick={() => {
                   setShowExitConfirm(false);
                   failSession('give_up');
                 }}
-                className="py-3 bg-red-950/70 hover:bg-red-900/80 border border-red-700/60 text-red-200 font-bold rounded-xl text-xs active:scale-95 transition-all"
+                className={`py-3 border font-bold rounded-xl text-xs active:scale-95 transition-all ${
+                  isBreak
+                    ? 'bg-amber-950/70 hover:bg-amber-900/80 border-amber-700/60 text-amber-200'
+                    : 'bg-red-950/70 hover:bg-red-900/80 border-red-700/60 text-red-200'
+                }`}
               >
-                Rendirme
+                {isBreak ? 'Terminar' : 'Rendirme'}
               </button>
             </div>
           </div>
@@ -505,11 +573,38 @@ export const App: React.FC = () => {
         onApplySyncCode={applySyncCode}
         isSynced={isSynced}
         soundEnabled={soundEnabled}
+        currentSoundscape={currentSoundscape}
+        onChangeSoundscape={changeSoundscape}
         onToggleSound={toggleSound}
         strictMode={strictMode}
         onToggleStrictMode={() => setStrictMode(!strictMode)}
         onResetStats={resetStats}
+        onForceReload={forceReloadApp}
       />
+
+      {/* Modal de Estadísticas & Logros */}
+      <AnalyticsModal
+        isOpen={showAnalyticsModal}
+        onClose={() => setShowAnalyticsModal(false)}
+        records={stats.records}
+        streakDays={stats.streakDays}
+        totalMinutes={stats.totalFocusMinutes}
+        unlockedAchievements={stats.unlockedAchievements || []}
+      />
+
+      {/* Modal de Sesión Completada & Modo Descanso */}
+      {completedSessionData && (
+        <SessionSuccessModal
+          isOpen={true}
+          onClose={closeSuccessModal}
+          speciesId={completedSessionData.speciesId}
+          tag={completedSessionData.tag}
+          durationMinutes={completedSessionData.durationMinutes}
+          dropsEarned={completedSessionData.dropsEarned}
+          onSaveNote={(note) => saveSessionNote(note)}
+          onStartBreak={startBreak}
+        />
+      )}
     </div>
   );
 };
