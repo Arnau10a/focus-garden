@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+  }
+
+  body {
+    padding-top: var(--sat);
+    padding-bottom: var(--sab);
+    padding-left: var(--sal);
+    padding-right: var(--sar);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+/* Ocultar barra de desplazamiento en selectores de etiquetas */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Animaciones suaves */
+@keyframes sway {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(1.8deg); }
+}
+
+@keyframes pulseHalo {
+  0%, 100% {
+    box-shadow: 0 0 40px rgba(16, 185, 129, 0.15), inset 0 0 20px rgba(16, 185, 129, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 70px rgba(16, 185, 129, 0.3), inset 0 0 30px rgba(16, 185, 129, 0.1);
+  }
+}
+
+.plant-sway {
+  transform-origin: bottom center;
+  animation: sway 5s ease-in-out infinite;
+}
+
+.timer-halo {
+  animation: pulseHalo 4s ease-in-out infinite;
+}
