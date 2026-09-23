@@ -38,6 +38,15 @@ export interface PlantRecord {
   growthStage: GrowthStage;
 }
 
+export interface ActiveSessionSync {
+  isRunning: boolean;
+  speciesId: PlantSpeciesId;
+  tag: SessionTag;
+  durationMinutes: number;
+  startTime: number; // timestamp en ms
+  targetEndTime: number; // timestamp en ms
+}
+
 export interface UserStats {
   drops: number; // Moneda de gotas de agua
   totalFocusMinutes: number;
@@ -45,4 +54,5 @@ export interface UserStats {
   lastActiveDate: string;
   unlockedSpecies: PlantSpeciesId[];
   records: PlantRecord[];
+  activeSession?: ActiveSessionSync | null;
 }

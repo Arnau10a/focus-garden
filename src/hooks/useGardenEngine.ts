@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { PlantSpeciesId, SessionTag, GrowthStage, UserStats, PlantRecord } from '../types';
+import { PlantSpeciesId, SessionTag, GrowthStage, UserStats, PlantRecord, ActiveSessionSync } from '../types';
 import { soundscape } from '../audio/soundscape';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import confetti from 'canvas-confetti';
@@ -13,35 +13,32 @@ const INITIAL_STATS: UserStats = {
   streakDays: 1,
   lastActiveDate: new Date().toISOString().split('T')[0],
   unlockedSpecies: ['pine'],
-  records: []
+  records: [],
+  activeSession: null
 };
 
-// Generador de código aleatorio corto ej: FG-7491
 const generateSyncCode = () => {
   const num = Math.floor(1000 + Math.random() * 9000);
   return `FG-${num}`;
 };
 
 export const useGardenEngine = () => {
-  // Código de sincronización para conectar móvil y PC
   const [syncCode, setSyncCode] = useState<string>(() => {
     return localStorage.getItem(SYNC_CODE_KEY) || generateSyncCode();
   });
 
   const [isSynced, setIsSynced] = useState<boolean>(false);
 
-  // Estado de usuario y persistencia local
   const [stats, setStats] = useState<UserStats>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) return JSON.parse(saved);
     } catch {
-      // Ignorar fallback
+      // Ignorado
     }
     return INITIAL_STATS;
   });
 
-  // Guardar en localStorage siempre
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
@@ -50,77 +47,6 @@ export const useGardenEngine = () => {
       // Ignorado
     }
   }, [stats, syncCode]);
-
-  // Si Supabase está configurado, sincronizar bidireccionalmente en la nube
-  useEffect(() => {
-    if (!isSupabaseConfigured || !supabase) return;
-    const client = supabase;
-
-    // 1. Cargar datos remotos
-    const fetchRemote = async () => {
-      try {
-        const { data, error } = await client
-          .from('gardens')
-          .select('stats')
-          .eq('sync_code', syncCode)
-          .single();
-
-        if (data && data.stats) {
-          setStats(data.stats);
-          setIsSynced(true);
-        } else if (!error || error.code === 'PGRST116') {
-          // Crear fila inicial en Supabase para este syncCode
-          await client
-            .from('gardens')
-            .upsert({ sync_code: syncCode, stats });
-          setIsSynced(true);
-        }
-      } catch (err) {
-        console.warn('Error syncing with Supabase:', err);
-      }
-    };
-
-    fetchRemote();
-
-    // 2. Suscribirse a cambios en tiempo real
-    const channel = client
-      .channel(`garden_${syncCode}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'gardens', filter: `sync_code=eq.${syncCode}` },
-        (payload) => {
-          if (payload.new && payload.new.stats) {
-            setStats(payload.new.stats);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      client.removeChannel(channel);
-    };
-  }, [syncCode]);
-
-  // Helper para empujar cambios a la nube si Supabase está activo
-  const syncToCloud = useCallback(async (newStats: UserStats) => {
-    if (isSupabaseConfigured && supabase) {
-      const client = supabase;
-      try {
-        await client
-          .from('gardens')
-          .upsert({ sync_code: syncCode, stats: newStats });
-      } catch (err) {
-        console.warn('Could not sync to cloud:', err);
-      }
-    }
-  }, [syncCode]);
-
-  // Aplicar un nuevo código de sincronización (ej: poner en el móvil el código del PC)
-  const applySyncCode = (newCode: string) => {
-    setSyncCode(newCode);
-    localStorage.setItem(SYNC_CODE_KEY, newCode);
-    // Si Supabase está conectado, traerá inmediatamente la partida del otro dispositivo
-  };
 
   // Configuración de la sesión
   const [selectedSpecies, setSelectedSpecies] = useState<PlantSpeciesId>('pine');
@@ -137,6 +63,95 @@ export const useGardenEngine = () => {
 
   const timerRef = useRef<number | null>(null);
   const strictTimerRef = useRef<number | null>(null);
+
+  // Helper para empujar cambios a la nube si Supabase está activo
+  const syncToCloud = useCallback(async (newStats: UserStats) => {
+    if (isSupabaseConfigured && supabase) {
+      const client = supabase;
+      try {
+        await client
+          .from('gardens')
+          .upsert({ sync_code: syncCode, stats: newStats });
+      } catch (err) {
+        console.warn('Could not sync to cloud:', err);
+      }
+    }
+  }, [syncCode]);
+
+  // Manejar sincronización de sesión activa cuando llega desde el otro dispositivo
+  const handleRemoteStatsUpdate = useCallback((remoteStats: UserStats) => {
+    setStats(remoteStats);
+
+    const active = remoteStats.activeSession;
+    if (active && active.isRunning) {
+      // Hay un temporizador corriendo en el otro dispositivo
+      const now = Date.now();
+      const remaining = Math.max(0, Math.round((active.targetEndTime - now) / 1000));
+
+      setSelectedSpecies(active.speciesId);
+      setSelectedTag(active.tag);
+      setTargetDurationMinutes(active.durationMinutes);
+      setSecondsRemaining(remaining);
+      setIsRunning(true);
+      setIsPaused(false);
+    } else if (!active && isRunning) {
+      // Si el otro dispositivo se rindió o terminó la sesión
+      setIsRunning(false);
+      setIsPaused(false);
+    }
+  }, [isRunning]);
+
+  // Suscripción Realtime con Supabase
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+    const client = supabase;
+
+    const fetchRemote = async () => {
+      try {
+        const { data, error } = await client
+          .from('gardens')
+          .select('stats')
+          .eq('sync_code', syncCode)
+          .single();
+
+        if (data && data.stats) {
+          handleRemoteStatsUpdate(data.stats);
+          setIsSynced(true);
+        } else if (!error || error.code === 'PGRST116') {
+          await client
+            .from('gardens')
+            .upsert({ sync_code: syncCode, stats });
+          setIsSynced(true);
+        }
+      } catch (err) {
+        console.warn('Error syncing with Supabase:', err);
+      }
+    };
+
+    fetchRemote();
+
+    const channel = client
+      .channel(`garden_${syncCode}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'gardens', filter: `sync_code=eq.${syncCode}` },
+        (payload) => {
+          if (payload.new && payload.new.stats) {
+            handleRemoteStatsUpdate(payload.new.stats);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      client.removeChannel(channel);
+    };
+  }, [syncCode, handleRemoteStatsUpdate]);
+
+  const applySyncCode = (newCode: string) => {
+    setSyncCode(newCode);
+    localStorage.setItem(SYNC_CODE_KEY, newCode);
+  };
 
   const totalSeconds = targetDurationMinutes * 60;
   const progressRatio = (totalSeconds - secondsRemaining) / totalSeconds;
@@ -188,7 +203,8 @@ export const useGardenEngine = () => {
         totalFocusMinutes: prev.totalFocusMinutes + targetDurationMinutes,
         streakDays: isNewDay ? prev.streakDays + 1 : prev.streakDays,
         lastActiveDate: today,
-        records: [newRecord, ...prev.records]
+        records: [newRecord, ...prev.records],
+        activeSession: null // Libera la sesión en el cronómetro del otro equipo
       };
       syncToCloud(updated);
       return updated;
@@ -224,7 +240,8 @@ export const useGardenEngine = () => {
     setStats((prev) => {
       const updated: UserStats = {
         ...prev,
-        records: [newRecord, ...prev.records]
+        records: [newRecord, ...prev.records],
+        activeSession: null // Se rinde también en el otro dispositivo
       };
       syncToCloud(updated);
       return updated;
@@ -233,16 +250,36 @@ export const useGardenEngine = () => {
     setSecondsRemaining(targetDurationMinutes * 60);
   }, [totalSeconds, secondsRemaining, selectedSpecies, selectedTag, targetDurationMinutes, syncToCloud]);
 
-  // Iniciar sesión
+  // Iniciar sesión y propagar a la nube
   const startSession = () => {
     soundscape.playZenChime('start');
     if (soundEnabled) {
       soundscape.startRain();
     }
-    setSecondsRemaining(targetDurationMinutes * 60);
+    const durationSecs = targetDurationMinutes * 60;
+    setSecondsRemaining(durationSecs);
     setIsRunning(true);
     setIsPaused(false);
     setStrictWarningSeconds(null);
+
+    const now = Date.now();
+    const activeSession: ActiveSessionSync = {
+      isRunning: true,
+      speciesId: selectedSpecies,
+      tag: selectedTag,
+      durationMinutes: targetDurationMinutes,
+      startTime: now,
+      targetEndTime: now + durationSecs * 1000
+    };
+
+    setStats((prev) => {
+      const updated = {
+        ...prev,
+        activeSession
+      };
+      syncToCloud(updated);
+      return updated;
+    });
   };
 
   const togglePause = () => {
@@ -250,7 +287,7 @@ export const useGardenEngine = () => {
     setIsPaused((prev) => !prev);
   };
 
-  // Cronómetro
+  // Cronómetro local
   useEffect(() => {
     if (!isRunning || isPaused) return;
 
@@ -270,7 +307,7 @@ export const useGardenEngine = () => {
     };
   }, [isRunning, isPaused, finishSessionSuccess]);
 
-  // Detección de salida a otra app / cambio de pestaña
+  // Detección de salida en Modo Estricto
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (!isRunning || !strictMode) return;
